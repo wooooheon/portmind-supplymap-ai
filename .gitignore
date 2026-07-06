@@ -1,0 +1,17 @@
+.DS_Store
+.env*
+!.env.example
+.next
+node_modules
+prisma/dev.db
+data/raw
+data/normalized
+data/exports
+work
+tmp
+output
+outputs
+.agents
+.vercel
+*.tsbuildinfo
+*.log

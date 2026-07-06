@@ -1,0 +1,435 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum IngestionStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum CoordSystem {
+  WGS84
+  GCJ02
+  BD09
+  UNKNOWN
+}
+
+enum RiskLevel {
+  UNKNOWN
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum CertType {
+  KC
+  RRA
+  MFDS
+  CCC
+  CQC
+  ISO
+  HACCP
+  FSSC
+  BRCGS
+  KOSHA
+  ENERGY
+  OTHER
+}
+
+enum RiskEventType {
+  RECALL
+  SUSPENSION
+  NON_COMPLIANCE
+  ADMIN_PENALTY
+  IP_RISK
+  CERT_CANCELLED
+  UNKNOWN
+}
+
+enum EntityType {
+  FACTORY
+  PRODUCT
+  CERTIFICATE
+  RISK_EVENT
+  TRADE_REQUIREMENT
+}
+
+enum EvidenceType {
+  OFFICIAL_API
+  SEARCH_RESULT
+  USER_UPLOAD
+  AI_INFERENCE
+}
+
+enum ExportFileType {
+  CSV
+  JSONL
+  JSON
+}
+
+enum SupplySourceType {
+  MOTIE_PUBLIC
+  OTHER_PUBLIC
+  PRIVATE
+  USER_UPLOAD
+}
+
+enum SupplierScope {
+  DOMESTIC
+  GLOBAL
+}
+
+enum SupplyVerificationStatus {
+  VERIFIED
+  PARTIAL
+  CHECK_REQUIRED
+  MOCK
+}
+
+enum RiskSignalKind {
+  CERTIFICATION
+  RECALL
+  CUSTOMS
+  COUNTRY_RISK
+  MARKET
+  TRADE_SECURITY
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  provider    String
+  label       String
+  maskedValue String?
+  envKeyName  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([provider, label])
+  @@index([provider])
+}
+
+model ApiSource {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  provider    String
+  category    String
+  baseUrl     String
+  requiresKey Boolean  @default(false)
+  keyEnvName  String?
+  status      String   @default("stub")
+  docsUrl     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model IngestionRun {
+  id                 String          @id @default(cuid())
+  sourceCode         String
+  status             IngestionStatus @default(PENDING)
+  paramsJson         String?
+  rawFilePath        String?
+  normalizedFilePath String?
+  recordCount        Int             @default(0)
+  errorMessage       String?
+  startedAt          DateTime        @default(now())
+  finishedAt         DateTime?
+
+  @@index([sourceCode])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model Factory {
+  id                   String     @id @default(cuid())
+  canonicalName        String
+  chineseName          String?
+  englishName          String?
+  koreanName           String?
+  aliasesJson          String?
+  country              String
+  province             String?
+  city                 String?
+  addressRaw           String?
+  addressNormalized    String?
+  latitude             Float?
+  longitude            Float?
+  coordSystem          CoordSystem @default(UNKNOWN)
+  geocodeConfidence    Float?
+  geocodeProvider      String?
+  sourceTagsJson       String?
+  importReadinessScore Int        @default(0)
+  riskLevel            RiskLevel  @default(UNKNOWN)
+  createdAt            DateTime   @default(now())
+  updatedAt            DateTime   @updatedAt
+
+  products     Product[]
+  certificates Certificate[]
+  riskEvents   RiskEvent[]
+
+  @@index([canonicalName])
+  @@index([country, province, city])
+  @@index([riskLevel])
+}
+
+model Product {
+  id              String   @id @default(cuid())
+  factoryId       String?
+  productName     String
+  category        String?
+  hsCodeCandidate String?
+  sourceCode      String?
+  rawJson         String?
+  createdAt       DateTime @default(now())
+
+  factory      Factory?      @relation(fields: [factoryId], references: [id], onDelete: SetNull)
+  certificates Certificate[]
+  riskEvents   RiskEvent[]
+
+  @@index([factoryId])
+  @@index([productName])
+}
+
+model Certificate {
+  id               String   @id @default(cuid())
+  factoryId        String?
+  productId        String?
+  certType         CertType @default(OTHER)
+  certNumber       String?
+  modelName        String?
+  productName      String?
+  manufacturerName String?
+  importerName     String?
+  country          String?
+  status           String?
+  issueDate        DateTime?
+  expiryDate       DateTime?
+  sourceCode       String
+  evidenceUrl      String?
+  rawJson          String?
+  createdAt        DateTime @default(now())
+
+  factory Factory? @relation(fields: [factoryId], references: [id], onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([factoryId])
+  @@index([certNumber])
+  @@index([certType])
+}
+
+model TradeRequirement {
+  id               String   @id @default(cuid())
+  hsCode           String
+  importExportType String?
+  lawName          String?
+  agencyName       String?
+  requirementName  String?
+  sourceCode       String
+  rawJson          String?
+  createdAt        DateTime @default(now())
+
+  @@index([hsCode])
+}
+
+model RiskEvent {
+  id          String        @id @default(cuid())
+  factoryId   String?
+  productId   String?
+  eventType   RiskEventType @default(UNKNOWN)
+  title       String
+  description String?
+  eventDate   DateTime?
+  severity    String?
+  sourceCode  String
+  evidenceUrl String?
+  rawJson     String?
+  createdAt   DateTime      @default(now())
+
+  factory Factory? @relation(fields: [factoryId], references: [id], onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([factoryId])
+  @@index([eventType])
+}
+
+model Evidence {
+  id           String       @id @default(cuid())
+  entityType   EntityType
+  entityId     String
+  sourceCode   String
+  evidenceType EvidenceType
+  title        String?
+  url          String?
+  retrievedAt  DateTime     @default(now())
+  rawSnippet   String?
+  rawJson      String?
+
+  @@index([entityType, entityId])
+  @@index([sourceCode])
+}
+
+model ExportFile {
+  id          String         @id @default(cuid())
+  fileType    ExportFileType
+  entityType  String
+  filePath    String
+  recordCount Int            @default(0)
+  createdAt   DateTime       @default(now())
+
+  @@index([entityType])
+  @@index([createdAt])
+}
+
+model SupplyDataSource {
+  id             String           @id @default(cuid())
+  code           String           @unique
+  providerName   String
+  datasetName    String
+  sourceType     SupplySourceType
+  sourceUrl      String
+  fetchedAt      DateTime
+  license        String
+  updateCycle    String?
+  status         String           @default("mock")
+  isMock         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  industrialComplexes IndustrialComplex[]
+  suppliers            Supplier[]
+  riskSignals          RiskSignal[]
+  chatEvidence         ChatEvidence[]
+
+  @@index([sourceType])
+  @@index([providerName])
+}
+
+model IndustrialComplex {
+  id               String           @id
+  sourceId         String
+  code             String           @unique
+  name             String
+  region           String
+  city             String?
+  latitude         Float?
+  longitude        Float?
+  industryMixJson  String
+  tenantCount      Int?
+  operatingCount   Int?
+  operationRate    Float?
+  exportAmount     Float?
+  employeeCount    Int?
+  providerName     String
+  datasetName      String
+  sourceType       SupplySourceType
+  sourceUrl        String
+  fetchedAt        DateTime
+  license          String
+  verification     SupplyVerificationStatus @default(MOCK)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  source    SupplyDataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  suppliers Supplier[]
+
+  @@index([region])
+  @@index([sourceType])
+}
+
+model Supplier {
+  id                  String           @id
+  sourceId            String
+  industrialComplexId String?
+  externalId          String
+  name                String
+  scope               SupplierScope
+  countryCode         String
+  region              String?
+  city                String?
+  address             String?
+  latitude            Float?
+  longitude           Float?
+  productsJson        String
+  hsCodesJson         String
+  description         String?
+  providerName        String
+  datasetName         String
+  sourceType          SupplySourceType
+  sourceUrl           String
+  fetchedAt           DateTime
+  license             String
+  verification        SupplyVerificationStatus @default(MOCK)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  source            SupplyDataSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  industrialComplex IndustrialComplex? @relation(fields: [industrialComplexId], references: [id], onDelete: SetNull)
+  riskSignals       RiskSignal[]
+
+  @@unique([sourceId, externalId])
+  @@index([scope, countryCode])
+  @@index([region])
+  @@index([sourceType])
+}
+
+model RiskSignal {
+  id             String           @id
+  sourceId       String
+  supplierId     String?
+  productQuery   String?
+  hsCode         String?
+  kind           RiskSignalKind
+  severity       String
+  status         String
+  title          String
+  summary        String
+  scoreImpact    Int              @default(0)
+  providerName   String
+  datasetName    String
+  sourceType     SupplySourceType
+  sourceUrl      String
+  fetchedAt      DateTime
+  license        String
+  verification   SupplyVerificationStatus @default(MOCK)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  source   SupplyDataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  supplier Supplier?        @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@index([kind])
+  @@index([supplierId])
+  @@index([hsCode])
+}
+
+model ChatEvidence {
+  id             String           @id
+  sourceId       String
+  sessionId      String?
+  evidenceKey    String
+  title          String
+  snippet        String
+  claim          String?
+  providerName   String
+  datasetName    String
+  sourceType     SupplySourceType
+  sourceUrl      String
+  fetchedAt      DateTime
+  license        String
+  verification   SupplyVerificationStatus @default(MOCK)
+  createdAt      DateTime         @default(now())
+
+  source SupplyDataSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceId, evidenceKey])
+  @@index([sessionId])
+  @@index([sourceType])
+}

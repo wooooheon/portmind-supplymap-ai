@@ -1,0 +1,111 @@
+@import "leaflet/dist/leaflet.css";
+@import "leaflet.markercluster/dist/MarkerCluster.css";
+@import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #f7f9fb;
+  color: #172026;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #f7f9fb;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+}
+
+.marker-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  border: 2px solid white;
+  box-shadow: 0 3px 10px rgba(23, 32, 38, 0.22);
+}
+
+.marker-dot.low {
+  background: #168a57;
+}
+
+.marker-dot.medium,
+.marker-dot.unknown {
+  background: #d89b22;
+}
+
+.marker-dot.high,
+.marker-dot.critical {
+  background: #c0392b;
+}
+
+.amap-factory-marker {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  cursor: default;
+}
+
+.amap-factory-dot {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid white;
+  border-radius: 9999px;
+  box-shadow: 0 2px 8px rgba(23, 32, 38, 0.25);
+}
+
+.amap-factory-tooltip {
+  pointer-events: none;
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  z-index: 20;
+  max-width: 240px;
+  min-width: max-content;
+  transform: translateX(-50%) translateY(3px);
+  border: 1px solid #d8e0e8;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #172026;
+  box-shadow: 0 8px 24px rgba(23, 32, 38, 0.16);
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  opacity: 0;
+  padding: 6px 8px;
+  white-space: nowrap;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.amap-factory-tooltip-title {
+  color: #172026;
+}
+
+.amap-factory-tooltip-meta {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.amap-factory-marker:hover .amap-factory-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
