@@ -5,7 +5,13 @@ import { findGlobalSupply } from "./global";
 import { extractProductIntent } from "./intent";
 import { MOCK_COMPLEXES, MOCK_DOMESTIC_SUPPLIERS, mockEvidence } from "./mock-data";
 import { analyzeRisks, scoreCandidates } from "./risk";
-import { callLlmProviderChat, normalizeLlmProvider, type LlmChatResult, type LlmProvider } from "@/lib/llm/providers";
+import {
+  callLlmProviderChat,
+  normalizeLlmProvider,
+  type LlmChatResult,
+  type LlmProvider,
+  type LlmReasoningEffort
+} from "@/lib/llm/providers";
 import type {
   EvidenceRecord,
   IndustrialComplexSummary,
@@ -33,6 +39,8 @@ export type SupplyMapChatRequest = {
   judgeDemo?: boolean;
   useDeepSeek?: boolean;
   llmProvider?: LlmProvider;
+  model?: string;
+  reasoningEffort?: LlmReasoningEffort;
 };
 
 export type SupplyMapChatEvidenceRecord = EvidenceRecord & {
@@ -45,6 +53,7 @@ export type SupplyMapChatResponse = {
   answer: string;
   model: string;
   provider: LlmProvider;
+  reasoningEffort?: LlmReasoningEffort;
   usedLLM: boolean;
   confidence: number;
   needsVerification: boolean;
@@ -817,6 +826,8 @@ async function callSupplyMapChatLLM(args: {
 
   return callLlmProviderChat({
     provider,
+    model: args.request.model,
+    reasoningEffort: args.request.reasoningEffort,
     messages: [
       { role: "system", content: system },
       { role: "user", content: user }
@@ -856,6 +867,7 @@ export async function runSupplyMapChat(request: SupplyMapChatRequest): Promise<S
     answer: llm.answer,
     model: llm.model,
     provider: llm.provider,
+    reasoningEffort: request.reasoningEffort,
     usedLLM: llm.usedLLM,
     confidence: confidenceForContext(context, evidence),
     needsVerification: needsVerificationForContext(context, evidence),

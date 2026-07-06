@@ -1,6 +1,6 @@
 import { buildPromptAugmentation } from "./prompt-augmentation";
 import type { TradeAssistantResponse } from "./types";
-import { callLlmProviderChat, type LlmChatResult, type LlmProvider } from "@/lib/llm/providers";
+import { callLlmProviderChat, type LlmChatResult, type LlmProvider, type LlmReasoningEffort } from "@/lib/llm/providers";
 
 function fallbackAnswer(
   prompt: string,
@@ -35,6 +35,18 @@ function fallbackAnswer(
 }
 
 export async function runTradeAssistant(prompt: string, provider: LlmProvider = "deepseek"): Promise<TradeAssistantResponse> {
+  return runTradeAssistantWithOptions(prompt, { provider });
+}
+
+export async function runTradeAssistantWithOptions(
+  prompt: string,
+  options: {
+    provider?: LlmProvider;
+    model?: string;
+    reasoningEffort?: LlmReasoningEffort;
+  } = {}
+): Promise<TradeAssistantResponse> {
+  const provider = options.provider ?? "deepseek";
   const augmentation = await buildPromptAugmentation(prompt);
   const system = [
     "You are a Korean trade intelligence analyst for import buyers.",
@@ -68,6 +80,8 @@ export async function runTradeAssistant(prompt: string, provider: LlmProvider = 
 
   const llm = await callLlmProviderChat({
     provider,
+    model: options.model,
+    reasoningEffort: options.reasoningEffort,
     messages: [
       { role: "system", content: system },
       { role: "user", content: user }
@@ -82,6 +96,7 @@ export async function runTradeAssistant(prompt: string, provider: LlmProvider = 
     answer: llm.answer,
     model: llm.model,
     provider: llm.provider,
+    reasoningEffort: options.reasoningEffort,
     usedLLM: llm.usedLLM,
     intent: augmentation.intent,
     evidences: augmentation.evidences,

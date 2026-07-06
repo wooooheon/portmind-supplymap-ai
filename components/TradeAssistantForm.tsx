@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, Building2, MapPinned, RefreshCw, Send, Sparkles, User } from "lucide-react";
-import { useMemo, useState } from "react";
-import type { LlmProvider } from "@/lib/llm/providers";
+import { Bot, Brain, Building2, CheckCircle2, ChevronDown, DatabaseZap, MapPinned, RefreshCw, Send, Sparkles, User } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  defaultModelForProvider,
+  modelOptionsForProvider,
+  type LlmProvider,
+  type LlmReasoningEffort
+} from "@/lib/llm/providers";
 import type { EvidenceRecord } from "@/lib/supplymap/types";
 
 type MatchedFactory = {
@@ -28,6 +33,7 @@ type AssistantResult = {
   answer: string;
   model?: string;
   provider?: LlmProvider;
+  reasoningEffort?: LlmReasoningEffort;
   usedLLM?: boolean;
   confidence?: number;
   needsVerification?: boolean;
@@ -51,6 +57,27 @@ type AssistantResult = {
   warnings: string[];
 };
 
+type LlmRequestConfig = {
+  provider: LlmProvider;
+  model: string;
+  reasoningEffort: LlmReasoningEffort;
+};
+
+type GenerationStep = {
+  label: string;
+  status: "pending" | "active" | "done";
+};
+
+type GenerationTrace = {
+  provider: LlmProvider;
+  model: string;
+  reasoningEffort: LlmReasoningEffort;
+  state: "thinking" | "answering" | "done";
+  steps: GenerationStep[];
+  dataSummary: string[];
+  evidenceTitles: string[];
+};
+
 type ChatMessage = {
   id: string;
   role: "assistant" | "user";
@@ -58,6 +85,8 @@ type ChatMessage = {
   meta?: string;
   factories?: MatchedFactory[];
   evidenceIds?: string[];
+  trace?: GenerationTrace;
+  isTyping?: boolean;
 };
 
 type TradeAssistantFormProps = {
@@ -68,7 +97,7 @@ type TradeAssistantFormProps = {
   examples?: string[];
   placeholder?: string;
   submitLabel?: string;
-  buildRequestBody?: (prompt: string, llmProvider: LlmProvider) => unknown;
+  buildRequestBody?: (prompt: string, config: LlmRequestConfig) => unknown;
   normalizeResult?: (payload: unknown) => AssistantResult;
   onEvidenceRecords?: (evidence: EvidenceRecord[]) => void;
   onOpenEvidence?: (id: string) => void;
@@ -89,8 +118,60 @@ const providerOptions: Array<{ value: LlmProvider; label: string }> = [
   { value: "openai", label: "ChatGPT" }
 ];
 
+const reasoningOptions: Array<{ value: LlmReasoningEffort; label: string; compact: string }> = [
+  { value: "low", label: "빠르게", compact: "Low" },
+  { value: "medium", label: "균형", compact: "Med" },
+  { value: "high", label: "깊게", compact: "High" },
+  { value: "xhigh", label: "최대로", compact: "Max" }
+];
+
 function providerLabel(provider: LlmProvider) {
   return providerOptions.find((item) => item.value === provider)?.label ?? provider;
+}
+
+function reasoningLabel(value: LlmReasoningEffort) {
+  return reasoningOptions.find((item) => item.value === value)?.label ?? value;
+}
+
+const traceStepLabels = ["질문 의도 분석", "공장 DB/후보 조회", "인증·통관·리스크 근거 연결", "LLM 입력 구성", "답변 생성"];
+
+function traceSteps(activeIndex: number, done = false): GenerationStep[] {
+  return traceStepLabels.map((label, index) => ({
+    label,
+    status: done || index < activeIndex ? "done" : index === activeIndex ? "active" : "pending"
+  }));
+}
+
+function initialTrace(config: LlmRequestConfig): GenerationTrace {
+  return {
+    provider: config.provider,
+    model: config.model,
+    reasoningEffort: config.reasoningEffort,
+    state: "thinking",
+    steps: traceSteps(0),
+    dataSummary: ["질문 텍스트", "제품/HS 후보", "공장·인증·통관 근거"],
+    evidenceTitles: []
+  };
+}
+
+function completedTrace(body: AssistantResult, config: LlmRequestConfig, state: GenerationTrace["state"]): GenerationTrace {
+  const sources = body.intent?.selectedSources ?? [];
+  const dataSummary = [
+    `공장 후보 ${body.matchedFactories?.length ?? 0}개`,
+    `근거 ${body.evidences?.length ?? 0}개`,
+    body.intent?.hsCode ? `HS ${body.intent.hsCode}` : "HS 확인 필요",
+    body.intent?.country ? `국가 ${body.intent.country}` : "국가 미지정",
+    ...sources.slice(0, 4)
+  ];
+  return {
+    provider: body.provider ?? config.provider,
+    model: body.model ?? config.model,
+    reasoningEffort: body.reasoningEffort ?? config.reasoningEffort,
+    state,
+    steps: traceSteps(traceStepLabels.length, true),
+    dataSummary: Array.from(new Set(dataSummary)),
+    evidenceTitles: body.evidences?.slice(0, 5).map((item) => `${item.evidenceType} · ${item.title}`) ?? []
+  };
 }
 
 function makeId() {
@@ -181,6 +262,71 @@ function AssistantMarkdown({ content }: { content: string }) {
   );
 }
 
+function GenerationTraceCard({ trace }: { trace: GenerationTrace }) {
+  return (
+    <div className="mb-3 rounded-md border border-line bg-panel/70 p-3 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 font-bold text-ink">
+          {trace.state === "done" ? (
+            <CheckCircle2 className="h-4 w-4 text-teal" />
+          ) : (
+            <RefreshCw className="h-4 w-4 animate-spin text-cobalt" />
+          )}
+          <span>{trace.state === "thinking" ? "생각중" : trace.state === "answering" ? "답변 생성중" : "생성 완료"}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold text-muted">
+          <span className="rounded-full border border-line bg-white px-2 py-0.5">{providerLabel(trace.provider)}</span>
+          <span className="rounded-full border border-line bg-white px-2 py-0.5">{trace.model}</span>
+          <span className="rounded-full border border-line bg-white px-2 py-0.5">사고 {reasoningLabel(trace.reasoningEffort)}</span>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-5">
+        {trace.steps.map((step, index) => (
+          <div
+            key={step.label}
+            className={
+              "min-h-9 rounded border px-2 py-1.5 " +
+              (step.status === "done"
+                ? "border-teal/25 bg-white text-teal"
+                : step.status === "active"
+                  ? "border-cobalt/30 bg-white text-cobalt"
+                  : "border-line bg-white/60 text-muted")
+            }
+          >
+            <div className="text-[10px] font-bold">{String(index + 1).padStart(2, "0")}</div>
+            <div className="mt-0.5 leading-4">{step.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {trace.dataSummary.map((item) => (
+          <span key={item} className="rounded-full border border-line bg-white px-2 py-0.5 text-[11px] text-muted">
+            {item}
+          </span>
+        ))}
+      </div>
+
+      {trace.evidenceTitles.length ? (
+        <div className="mt-3 rounded border border-line bg-white p-2">
+          <div className="mb-1 flex items-center gap-1.5 font-bold text-ink">
+            <DatabaseZap className="h-3.5 w-3.5 text-cobalt" />
+            LLM 입력 근거
+          </div>
+          <div className="grid gap-1">
+            {trace.evidenceTitles.map((title) => (
+              <div key={title} className="truncate text-[11px] leading-4 text-muted">
+                {title}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function TradeAssistantForm({
   endpoint = "/api/trade-assistant",
   title = "Trade GPT",
@@ -188,7 +334,12 @@ export function TradeAssistantForm({
   welcomeMessage = "무역, 수입, 인증, 통관, 공장 리스크 질문을 입력하세요. 입력한 질문은 로컬 DB와 연결된 API evidence로 보강한 뒤 LLM에 전달합니다.",
   examples = defaultExamples,
   placeholder = "예: 중국 공장에서 제습기를 수입할 때 인증, 에너지효율, 통관 리스크를 정리해줘",
-  buildRequestBody = (nextPrompt: string, nextProvider: LlmProvider) => ({ prompt: nextPrompt, llmProvider: nextProvider }),
+  buildRequestBody = (nextPrompt: string, config: LlmRequestConfig) => ({
+    prompt: nextPrompt,
+    llmProvider: config.provider,
+    model: config.model,
+    reasoningEffort: config.reasoningEffort
+  }),
   normalizeResult,
   onEvidenceRecords,
   onOpenEvidence,
@@ -198,6 +349,8 @@ export function TradeAssistantForm({
 }: TradeAssistantFormProps = {}) {
   const [prompt, setPrompt] = useState("");
   const [llmProvider, setLlmProvider] = useState<LlmProvider>("deepseek");
+  const [selectedModel, setSelectedModel] = useState(defaultModelForProvider("deepseek"));
+  const [reasoningEffort, setReasoningEffort] = useState<LlmReasoningEffort>("medium");
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -211,19 +364,55 @@ export function TradeAssistantForm({
   const [isGenerating, setIsGenerating] = useState(false);
 
   const sourceLabels = useMemo(() => result?.intent?.selectedSources ?? [], [result]);
+  const modelOptions = useMemo(() => modelOptionsForProvider(llmProvider), [llmProvider]);
+  const selectedModelOption = useMemo(
+    () => modelOptions.find((option) => option.value === selectedModel) ?? modelOptions[0],
+    [modelOptions, selectedModel]
+  );
+
+  useEffect(() => {
+    setSelectedModel(defaultModelForProvider(llmProvider));
+  }, [llmProvider]);
 
   async function revealAssistantMessage(id: string, text: string) {
-    for (let index = 0; index < text.length; index += 8) {
-      const next = text.slice(0, index + 8);
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === id
+          ? {
+              ...message,
+              isTyping: true,
+              trace: message.trace ? { ...message.trace, state: "answering" } : message.trace
+            }
+          : message
+      )
+    );
+    for (let index = 0; index < text.length; index += 1) {
+      const next = text.slice(0, index + 1);
       setMessages((current) => current.map((message) => (message.id === id ? { ...message, content: next } : message)));
-      await sleep(12);
+      await sleep(4);
     }
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === id
+          ? {
+              ...message,
+              isTyping: false,
+              trace: message.trace ? { ...message.trace, state: "done" } : message.trace
+            }
+          : message
+      )
+    );
   }
 
   async function submitPrompt(nextPrompt = prompt) {
     const trimmed = nextPrompt.trim();
     if (trimmed.length < 4 || isGenerating) return;
 
+    const requestConfig: LlmRequestConfig = {
+      provider: llmProvider,
+      model: selectedModelOption?.value ?? selectedModel,
+      reasoningEffort
+    };
     setError(null);
     setPrompt("");
     const userMessage: ChatMessage = { id: makeId(), role: "user", content: trimmed };
@@ -231,17 +420,39 @@ export function TradeAssistantForm({
     const pendingMessage: ChatMessage = {
       id: assistantId,
       role: "assistant",
-      content: "질문과 연결된 공장/인증/통관 데이터를 확인하고 있습니다.",
-      meta: "Analyzing"
+      content: "",
+      meta: "Analyzing",
+      trace: initialTrace(requestConfig)
     };
     setMessages((current) => [...current, userMessage, pendingMessage]);
     setIsGenerating(true);
+    let activeStep = 0;
+    const traceTimer = window.setInterval(() => {
+      activeStep = Math.min(activeStep + 1, traceStepLabels.length - 1);
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === assistantId && message.trace?.state === "thinking"
+            ? {
+                ...message,
+                trace: {
+                  ...message.trace,
+                  steps: traceSteps(activeStep),
+                  dataSummary:
+                    activeStep >= 2
+                      ? ["질문 텍스트", "제품/HS 후보", "공장 DB", "인증·통관·리스크 근거"]
+                      : message.trace.dataSummary
+                }
+              }
+            : message
+        )
+      );
+    }, 900);
 
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildRequestBody(trimmed, llmProvider))
+        body: JSON.stringify(buildRequestBody(trimmed, requestConfig))
       });
       const rawBody = (await response.json()) as unknown;
       const errorBody = rawBody && typeof rawBody === "object" ? (rawBody as { error?: string }) : {};
@@ -272,9 +483,12 @@ export function TradeAssistantForm({
             ? {
                 ...message,
                 content: "",
+                trace: completedTrace(body, requestConfig, "answering"),
                 factories: matchedFactories.slice(0, 3),
                 evidenceIds: evidenceRecords.map((item) => item.id),
-                meta: `${providerLabel(body.provider ?? llmProvider)} · ${body.model ?? "assistant"} · ${body.usedLLM ? "LLM" : "Fallback"}${
+                meta: `${providerLabel(body.provider ?? llmProvider)} · ${body.model ?? requestConfig.model} · 사고 ${reasoningLabel(
+                  body.reasoningEffort ?? requestConfig.reasoningEffort
+                )} · ${body.usedLLM ? "LLM" : "Fallback"}${
                   typeof body.confidence === "number" ? ` · confidence ${body.confidence}%` : ""
                 }${body.needsVerification ? " · 확인 필요 포함" : ""} · factory matches ${matchedFactories.length}`
               }
@@ -283,6 +497,7 @@ export function TradeAssistantForm({
       );
       await revealAssistantMessage(assistantId, body.answer);
     } finally {
+      window.clearInterval(traceTimer);
       setIsGenerating(false);
     }
   }
@@ -306,7 +521,7 @@ export function TradeAssistantForm({
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="inline-flex overflow-hidden rounded-md border border-line bg-white text-xs font-bold">
+            <div className="inline-flex overflow-hidden rounded-md border border-line bg-white text-xs font-bold" aria-label="LLM provider">
               {providerOptions.map((option) => (
                 <button
                   key={option.value}
@@ -321,6 +536,44 @@ export function TradeAssistantForm({
                 </button>
               ))}
             </div>
+            <label className="relative min-w-[210px]">
+              <span className="sr-only">모델 선택</span>
+              <select
+                disabled={isGenerating}
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                className="h-8 w-full appearance-none rounded-md border border-line bg-white pl-3 pr-8 text-xs font-bold text-ink outline-none hover:bg-panel disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {modelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                    {option.badge ? ` · ${option.badge}` : ""}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-2 h-4 w-4 text-muted" />
+            </label>
+            <div className="inline-flex overflow-hidden rounded-md border border-line bg-white text-xs font-bold" aria-label="사고 정도">
+              {reasoningOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={isGenerating}
+                  onClick={() => setReasoningEffort(option.value)}
+                  title={option.label}
+                  className={`h-8 px-2.5 ${
+                    reasoningEffort === option.value ? "bg-ink text-white" : "text-muted hover:bg-panel"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {option.compact}
+                </button>
+              ))}
+            </div>
+            {selectedModelOption?.badge ? (
+              <span className="inline-flex h-8 items-center rounded-md border border-cobalt/20 bg-[#eef4fb] px-2 text-[11px] font-bold text-cobalt">
+                {selectedModelOption.badge}
+              </span>
+            ) : null}
             {isGenerating ? (
               <div className="inline-flex items-center gap-2 text-xs text-muted">
                 <RefreshCw className="h-4 w-4 animate-spin" />
@@ -350,7 +603,11 @@ export function TradeAssistantForm({
                     {isUser ? (
                       <pre className="whitespace-pre-wrap break-words font-sans">{message.content}</pre>
                     ) : (
-                      <AssistantMarkdown content={message.content} />
+                      <>
+                        {message.trace ? <GenerationTraceCard trace={message.trace} /> : null}
+                        {message.content ? <AssistantMarkdown content={message.content} /> : null}
+                        {message.isTyping ? <span className="mt-2 inline-block h-4 w-1.5 animate-pulse rounded bg-cobalt align-middle" /> : null}
+                      </>
                     )}
                   </div>
                   {!isUser && showMatchedFactories && message.factories?.length ? (
@@ -437,6 +694,27 @@ export function TradeAssistantForm({
 
       {showSidePanel ? (
         <aside className="grid content-start gap-4">
+        <section className="rounded-md border border-line bg-white p-4 shadow-soft">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+            <Brain className="h-4 w-4 text-cobalt" />
+            모델 실행
+          </div>
+          <dl className="grid gap-2 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">Provider</dt>
+              <dd className="font-medium">{providerLabel(result?.provider ?? llmProvider)}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">Model</dt>
+              <dd className="max-w-[170px] truncate text-right font-medium">{result?.model ?? selectedModel}</dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted">사고 정도</dt>
+              <dd className="font-medium">{reasoningLabel(result?.reasoningEffort ?? reasoningEffort)}</dd>
+            </div>
+          </dl>
+        </section>
+
         <section className="rounded-md border border-line bg-white p-4 shadow-soft">
           <h2 className="text-sm font-semibold">분석 조건</h2>
           {result ? (

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
+import { normalizeLlmModel, normalizeLlmProvider, normalizeReasoningEffort } from "@/lib/llm/providers";
 import { runSupplyMapChat, type SupplyMapChatEvidenceRecord } from "@/lib/supplymap/rag";
 
 export const runtime = "nodejs";
@@ -18,7 +19,9 @@ const bodySchema = z.object({
   analysisContext: z.unknown().optional(),
   judgeDemo: z.boolean().optional(),
   useDeepSeek: z.boolean().optional(),
-  llmProvider: z.enum(["deepseek", "openai"]).optional()
+  llmProvider: z.enum(["deepseek", "openai"]).optional(),
+  model: z.string().trim().max(80).optional(),
+  reasoningEffort: z.enum(["low", "medium", "high", "xhigh"]).optional()
 });
 
 function stableId(sourceId: string, evidenceKey: string): string {
@@ -81,12 +84,15 @@ async function persistChatEvidence(evidence: SupplyMapChatEvidenceRecord[]) {
 export async function POST(request: Request) {
   try {
     const body = bodySchema.parse(await request.json());
+    const provider = normalizeLlmProvider(body.llmProvider);
     const result = await runSupplyMapChat({
       ...body,
       country: body.country ?? body.importCountry,
       judgeDemo: body.judgeDemo ?? true,
       useDeepSeek: body.useDeepSeek ?? true,
-      llmProvider: body.llmProvider
+      llmProvider: provider,
+      model: normalizeLlmModel(provider, body.model),
+      reasoningEffort: normalizeReasoningEffort(body.reasoningEffort)
     });
     await persistChatEvidence(result.evidence).catch(() => undefined);
     return NextResponse.json(result);
