@@ -1,4 +1,5 @@
 import type { NormalizedRecord } from "@/lib/connectors/types";
+import type { LlmProvider } from "@/lib/llm/providers";
 
 export type TradeAssistantIntent = {
   query: string;
@@ -48,6 +49,7 @@ export type PromptAugmentationResult = {
 export type TradeAssistantResponse = {
   answer: string;
   model: string;
+  provider: LlmProvider;
   usedLLM: boolean;
   intent: TradeAssistantIntent;
   evidences: AssistantEvidence[];

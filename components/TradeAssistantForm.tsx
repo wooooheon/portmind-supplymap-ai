@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Bot, Building2, MapPinned, RefreshCw, Send, Sparkles, User } from "lucide-react";
 import { useMemo, useState } from "react";
+import type { LlmProvider } from "@/lib/llm/providers";
 import type { EvidenceRecord } from "@/lib/supplymap/types";
 
 type MatchedFactory = {
@@ -26,6 +27,7 @@ type MatchedFactory = {
 type AssistantResult = {
   answer: string;
   model?: string;
+  provider?: LlmProvider;
   usedLLM?: boolean;
   confidence?: number;
   needsVerification?: boolean;
@@ -66,7 +68,7 @@ type TradeAssistantFormProps = {
   examples?: string[];
   placeholder?: string;
   submitLabel?: string;
-  buildRequestBody?: (prompt: string) => unknown;
+  buildRequestBody?: (prompt: string, llmProvider: LlmProvider) => unknown;
   normalizeResult?: (payload: unknown) => AssistantResult;
   onEvidenceRecords?: (evidence: EvidenceRecord[]) => void;
   onOpenEvidence?: (id: string) => void;
@@ -81,6 +83,15 @@ const defaultExamples = [
   "의료기기 체온계를 중국 공장에서 들여오려는데 MFDS 품목허가와 확인해야 할 자료를 알려줘.",
   "제습기 수입 전 에너지소비효율등급과 대기전력 관련 확인사항을 정리해줘."
 ];
+
+const providerOptions: Array<{ value: LlmProvider; label: string }> = [
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "openai", label: "ChatGPT" }
+];
+
+function providerLabel(provider: LlmProvider) {
+  return providerOptions.find((item) => item.value === provider)?.label ?? provider;
+}
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -177,7 +188,7 @@ export function TradeAssistantForm({
   welcomeMessage = "무역, 수입, 인증, 통관, 공장 리스크 질문을 입력하세요. 입력한 질문은 로컬 DB와 연결된 API evidence로 보강한 뒤 LLM에 전달합니다.",
   examples = defaultExamples,
   placeholder = "예: 중국 공장에서 제습기를 수입할 때 인증, 에너지효율, 통관 리스크를 정리해줘",
-  buildRequestBody = (nextPrompt: string) => ({ prompt: nextPrompt }),
+  buildRequestBody = (nextPrompt: string, nextProvider: LlmProvider) => ({ prompt: nextPrompt, llmProvider: nextProvider }),
   normalizeResult,
   onEvidenceRecords,
   onOpenEvidence,
@@ -186,6 +197,7 @@ export function TradeAssistantForm({
   className
 }: TradeAssistantFormProps = {}) {
   const [prompt, setPrompt] = useState("");
+  const [llmProvider, setLlmProvider] = useState<LlmProvider>("deepseek");
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "welcome",
@@ -229,7 +241,7 @@ export function TradeAssistantForm({
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(buildRequestBody(trimmed))
+        body: JSON.stringify(buildRequestBody(trimmed, llmProvider))
       });
       const rawBody = (await response.json()) as unknown;
       const errorBody = rawBody && typeof rawBody === "object" ? (rawBody as { error?: string }) : {};
@@ -262,7 +274,7 @@ export function TradeAssistantForm({
                 content: "",
                 factories: matchedFactories.slice(0, 3),
                 evidenceIds: evidenceRecords.map((item) => item.id),
-                meta: `${body.model ?? "assistant"} · ${body.usedLLM ? "LLM" : "Fallback"}${
+                meta: `${providerLabel(body.provider ?? llmProvider)} · ${body.model ?? "assistant"} · ${body.usedLLM ? "LLM" : "Fallback"}${
                   typeof body.confidence === "number" ? ` · confidence ${body.confidence}%` : ""
                 }${body.needsVerification ? " · 확인 필요 포함" : ""} · factory matches ${matchedFactories.length}`
               }
@@ -283,7 +295,7 @@ export function TradeAssistantForm({
       }
     >
       <section className="flex min-h-[640px] flex-col overflow-hidden rounded-md border border-line bg-white shadow-soft">
-        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-cobalt text-white">
               <Bot className="h-5 w-5" />
@@ -293,12 +305,29 @@ export function TradeAssistantForm({
               <p className="text-xs text-muted">{subtitle}</p>
             </div>
           </div>
-          {isGenerating ? (
-            <div className="inline-flex items-center gap-2 text-xs text-muted">
-              <RefreshCw className="h-4 w-4 animate-spin" />
-              generating
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="inline-flex overflow-hidden rounded-md border border-line bg-white text-xs font-bold">
+              {providerOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={isGenerating}
+                  onClick={() => setLlmProvider(option.value)}
+                  className={`h-8 px-3 ${
+                    llmProvider === option.value ? "bg-cobalt text-white" : "text-muted hover:bg-panel"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
-          ) : null}
+            {isGenerating ? (
+              <div className="inline-flex items-center gap-2 text-xs text-muted">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                generating
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex-1 space-y-4 overflow-auto bg-panel/60 px-4 py-5">

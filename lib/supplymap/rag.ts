@@ -5,6 +5,7 @@ import { findGlobalSupply } from "./global";
 import { extractProductIntent } from "./intent";
 import { MOCK_COMPLEXES, MOCK_DOMESTIC_SUPPLIERS, mockEvidence } from "./mock-data";
 import { analyzeRisks, scoreCandidates } from "./risk";
+import { callLlmProviderChat, normalizeLlmProvider, type LlmChatResult, type LlmProvider } from "@/lib/llm/providers";
 import type {
   EvidenceRecord,
   IndustrialComplexSummary,
@@ -31,6 +32,7 @@ export type SupplyMapChatRequest = {
   analysisContext?: unknown;
   judgeDemo?: boolean;
   useDeepSeek?: boolean;
+  llmProvider?: LlmProvider;
 };
 
 export type SupplyMapChatEvidenceRecord = EvidenceRecord & {
@@ -42,6 +44,7 @@ export type SupplyMapChatEvidenceRecord = EvidenceRecord & {
 export type SupplyMapChatResponse = {
   answer: string;
   model: string;
+  provider: LlmProvider;
   usedLLM: boolean;
   confidence: number;
   needsVerification: boolean;
@@ -703,7 +706,8 @@ function fallbackSupplyMapChatAnswer(args: {
   context: SupplyMapOrchestrationContext;
   evidence: SupplyMapChatEvidenceRecord[];
   warning: string;
-}): { answer: string; model: string; usedLLM: boolean; warning: string } {
+  provider: LlmProvider;
+}): LlmChatResult {
   const domestic = args.context.domesticCandidates[0];
   const global = args.context.globalCandidates[0];
   const questionText = args.question.toLowerCase();
@@ -724,6 +728,7 @@ function fallbackSupplyMapChatAnswer(args: {
   if (args.evidence.length === 0) {
     return {
       model: "supplymap-fallback",
+      provider: args.provider,
       usedLLM: false,
       warning: args.warning,
       answer: [
@@ -735,6 +740,7 @@ function fallbackSupplyMapChatAnswer(args: {
 
   return {
     model: "supplymap-fallback",
+    provider: args.provider,
     usedLLM: false,
     warning: args.warning,
     answer: [
@@ -767,17 +773,16 @@ async function callSupplyMapChatLLM(args: {
   request: SupplyMapChatRequest;
   context: SupplyMapOrchestrationContext;
   evidence: SupplyMapChatEvidenceRecord[];
-}): Promise<{ answer: string; model: string; usedLLM: boolean; warning?: string }> {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
-  const enabled = args.request.useDeepSeek !== false && process.env.SUPPLYMAP_DEEPSEEK_ENABLED !== "false";
-
-  if (!apiKey || !enabled) {
+}): Promise<LlmChatResult> {
+  const provider = normalizeLlmProvider(args.request.llmProvider);
+  const enabled = provider !== "deepseek" || (args.request.useDeepSeek !== false && process.env.SUPPLYMAP_DEEPSEEK_ENABLED !== "false");
+  if (!enabled) {
     return fallbackSupplyMapChatAnswer({
       question: args.request.question,
       context: args.context,
       evidence: args.evidence,
-      warning: !apiKey ? "DEEPSEEK_API_KEY is not configured." : "DeepSeek disabled."
+      warning: "DeepSeek disabled.",
+      provider
     });
   }
 
@@ -810,56 +815,23 @@ async function callSupplyMapChatLLM(args: {
     "각 문장에 가능한 근거 ID를 붙이세요."
   ].join("\n");
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 35_000);
-  try {
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ],
-        temperature: 0.1,
-        max_tokens: 1400
+  return callLlmProviderChat({
+    provider,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user }
+    ],
+    maxTokens: 1400,
+    timeoutMs: 35_000,
+    fallback: (warning, fallbackProvider) =>
+      fallbackSupplyMapChatAnswer({
+        question: args.request.question,
+        context: args.context,
+        evidence: args.evidence,
+        warning,
+        provider: fallbackProvider
       })
-    });
-
-    if (!response.ok) {
-      return fallbackSupplyMapChatAnswer({
-        question: args.request.question,
-        context: args.context,
-        evidence: args.evidence,
-        warning: `DeepSeek HTTP ${response.status}`
-      });
-    }
-    const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; model?: string };
-    const answer = data.choices?.[0]?.message?.content?.trim();
-    if (!answer) {
-      return fallbackSupplyMapChatAnswer({
-        question: args.request.question,
-        context: args.context,
-        evidence: args.evidence,
-        warning: "DeepSeek returned empty answer."
-      });
-    }
-    return { answer, model: data.model ?? model, usedLLM: true };
-  } catch (error) {
-    return fallbackSupplyMapChatAnswer({
-      question: args.request.question,
-      context: args.context,
-      evidence: args.evidence,
-      warning: error instanceof Error ? error.message : "DeepSeek request failed."
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+  });
 }
 
 export async function runSupplyMapChat(request: SupplyMapChatRequest): Promise<SupplyMapChatResponse> {
@@ -883,6 +855,7 @@ export async function runSupplyMapChat(request: SupplyMapChatRequest): Promise<S
   return {
     answer: llm.answer,
     model: llm.model,
+    provider: llm.provider,
     usedLLM: llm.usedLLM,
     confidence: confidenceForContext(context, evidence),
     needsVerification: needsVerificationForContext(context, evidence),

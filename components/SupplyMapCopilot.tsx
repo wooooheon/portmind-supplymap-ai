@@ -8,6 +8,7 @@ import type { EvidenceRecord } from "@/lib/supplymap/types";
 type SupplyMapChatPayload = {
   answer?: string;
   model?: string;
+  provider?: "deepseek" | "openai";
   usedLLM?: boolean;
   confidence?: number;
   needsVerification?: boolean;
@@ -33,6 +34,7 @@ function normalizeSupplyMapChatResult(payload: unknown) {
   return {
     answer: body.answer ?? "근거 부족: 답변을 생성할 수 없습니다.",
     model: body.model ?? "supplymap-fallback",
+    provider: body.provider ?? "deepseek",
     usedLLM: Boolean(body.usedLLM),
     confidence: body.confidence,
     needsVerification: body.needsVerification ?? true,
@@ -106,7 +108,7 @@ export function SupplyMapCopilot({
         welcomeMessage="제품, HS코드, 국내 공장 후보, 중국/해외 베타 후보, 인증·리콜·통관·국가위험 근거를 기준으로 질문에 답합니다."
         examples={examples}
         placeholder="예: 인증·통관상 먼저 확인해야 할 항목을 근거와 함께 정리해줘"
-        buildRequestBody={(question) => ({
+        buildRequestBody={(question, llmProvider) => ({
           productName,
           hsCode,
           country,
@@ -114,7 +116,8 @@ export function SupplyMapCopilot({
           question,
           currentAnalysisId: analysisId,
           judgeDemo: true,
-          useDeepSeek: false
+          useDeepSeek: llmProvider === "deepseek",
+          llmProvider
         })}
         normalizeResult={normalizeSupplyMapChatResult}
         onEvidenceRecords={setEvidence}

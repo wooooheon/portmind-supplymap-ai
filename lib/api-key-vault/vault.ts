@@ -43,7 +43,9 @@ export const KEY_ENV_NAMES = [
   "BRAVE_SEARCH_API_KEY",
   "TAVILY_API_KEY",
   "GOOGLE_CUSTOM_SEARCH_API_KEY",
-  "GOOGLE_CUSTOM_SEARCH_CX"
+  "GOOGLE_CUSTOM_SEARCH_CX",
+  "DEEPSEEK_API_KEY",
+  "OPENAI_API_KEY"
 ] as const;
 
 export async function listApiKeyStatuses(): Promise<ApiKeyStatus[]> {

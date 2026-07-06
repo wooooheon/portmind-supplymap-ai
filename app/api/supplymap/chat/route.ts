@@ -17,7 +17,8 @@ const bodySchema = z.object({
   currentAnalysisId: z.string().trim().max(120).optional(),
   analysisContext: z.unknown().optional(),
   judgeDemo: z.boolean().optional(),
-  useDeepSeek: z.boolean().optional()
+  useDeepSeek: z.boolean().optional(),
+  llmProvider: z.enum(["deepseek", "openai"]).optional()
 });
 
 function stableId(sourceId: string, evidenceKey: string): string {
@@ -84,7 +85,8 @@ export async function POST(request: Request) {
       ...body,
       country: body.country ?? body.importCountry,
       judgeDemo: body.judgeDemo ?? true,
-      useDeepSeek: body.useDeepSeek ?? true
+      useDeepSeek: body.useDeepSeek ?? true,
+      llmProvider: body.llmProvider
     });
     await persistChatEvidence(result.evidence).catch(() => undefined);
     return NextResponse.json(result);
