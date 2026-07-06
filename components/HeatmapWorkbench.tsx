@@ -1,6 +1,6 @@
 "use client";
 
-import { Factory as FactoryIcon, Flame, MapPinned, MousePointer2, Tags } from "lucide-react";
+import { AlertTriangle, Factory as FactoryIcon, Flame, MapPinned, MousePointer2, Tags } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type HeatmapFactory = {
@@ -278,10 +278,159 @@ function buildMapPoints(factories: HeatmapFactory[], convertForAmap: boolean): M
     });
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function projectAsiaPoint(lat: number, lng: number) {
+  const left = clamp(((lng - 72) / (137.8 - 72)) * 100, 4, 96);
+  const top = clamp(((55.8 - lat) / (55.8 - 0.8)) * 100, 4, 96);
+  return { left, top };
+}
+
+function clusterMapPoints(points: MapPoint[]) {
+  const grid = new Map<
+    string,
+    {
+      lat: number;
+      lng: number;
+      count: number;
+      riskSum: number;
+      highRiskCount: number;
+    }
+  >();
+
+  for (const point of points) {
+    const key = `${Math.round(point.lat / 1.2)}:${Math.round(point.lng / 1.2)}`;
+    const existing = grid.get(key);
+    if (existing) {
+      existing.lat += point.lat;
+      existing.lng += point.lng;
+      existing.count += 1;
+      existing.riskSum += point.count;
+      if (point.riskLevel === "HIGH" || point.riskLevel === "CRITICAL") existing.highRiskCount += 1;
+    } else {
+      grid.set(key, {
+        lat: point.lat,
+        lng: point.lng,
+        count: 1,
+        riskSum: point.count,
+        highRiskCount: point.riskLevel === "HIGH" || point.riskLevel === "CRITICAL" ? 1 : 0
+      });
+    }
+  }
+
+  return Array.from(grid.values())
+    .map((cluster) => ({
+      lat: cluster.lat / cluster.count,
+      lng: cluster.lng / cluster.count,
+      count: cluster.count,
+      averageRisk: cluster.riskSum / cluster.count,
+      highRiskCount: cluster.highRiskCount
+    }))
+    .sort((left, right) => right.count - left.count || right.averageRisk - left.averageRisk)
+    .slice(0, 180);
+}
+
 function mapInfoHtml(info: FactoryMapInfo) {
   return `<div class="amap-factory-tooltip-title">${escapeHtml(info.name)}</div><div class="amap-factory-tooltip-meta">${escapeHtml(
     `${info.category} · ${info.feature}`
   )}</div>`;
+}
+
+function FallbackFactoryMap({
+  factories,
+  provider,
+  error,
+  onHoverFactory
+}: {
+  factories: HeatmapFactory[];
+  provider: "AMap" | "Google Maps";
+  error: string;
+  onHoverFactory: (factory: FactoryMapInfo) => void;
+}) {
+  const mapPoints = useMemo(() => buildMapPoints(factories, false), [factories]);
+  const clusters = useMemo(() => clusterMapPoints(mapPoints), [mapPoints]);
+  const markerPoints = useMemo(
+    () =>
+      [...mapPoints]
+        .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
+        .slice(0, 900),
+    [mapPoints]
+  );
+
+  return (
+    <div
+      className="relative h-[680px] overflow-hidden bg-[#e8f0f4]"
+      style={{
+        backgroundImage:
+          "linear-gradient(rgba(31,95,191,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(31,95,191,0.06) 1px, transparent 1px)",
+        backgroundSize: "46px 46px"
+      }}
+      aria-label={`${provider} fallback 해외 공장 지도`}
+    >
+      <div className="absolute left-[10%] top-[8%] h-[86%] w-[78%] rounded-[48%] border border-white/80 bg-white/30 shadow-inner" />
+      <div className="absolute left-[19%] top-[18%] h-[54%] w-[56%] rotate-[-8deg] rounded-[45%] border border-white/70 bg-cobalt/5" />
+      <div className="absolute left-[56%] top-[30%] h-[32%] w-[18%] rotate-[14deg] rounded-[45%] border border-white/60 bg-teal/5" />
+
+      {clusters.map((cluster) => {
+        const position = projectAsiaPoint(cluster.lat, cluster.lng);
+        const size = Math.min(64, 12 + cluster.count * 1.8);
+        const color = cluster.averageRisk >= 75 ? "#b42318" : cluster.averageRisk >= 50 ? "#b7791f" : "#0f766e";
+        return (
+          <div
+            key={`${cluster.lat}:${cluster.lng}:${cluster.count}`}
+            className="absolute rounded-full blur-sm"
+            style={{
+              left: `${position.left}%`,
+              top: `${position.top}%`,
+              width: size,
+              height: size,
+              transform: "translate(-50%, -50%)",
+              backgroundColor: color,
+              opacity: Math.min(0.18, 0.045 + cluster.count / 900)
+            }}
+          />
+        );
+      })}
+
+      {markerPoints.map((point) => {
+        const position = projectAsiaPoint(point.lat, point.lng);
+        return (
+          <button
+            key={point.id}
+            type="button"
+            title={`${point.title} · ${point.info.feature}`}
+            onClick={() => onHoverFactory(point.info)}
+            onMouseEnter={() => onHoverFactory(point.info)}
+            onFocus={() => onHoverFactory(point.info)}
+            className="absolute h-3 w-3 rounded-full border-2 border-white shadow-sm transition-transform hover:z-20 hover:scale-150 focus:z-20 focus:scale-150 focus:outline-none focus:ring-2 focus:ring-cobalt"
+            style={{
+              left: `${position.left}%`,
+              top: `${position.top}%`,
+              transform: "translate(-50%, -50%)",
+              backgroundColor: riskColor(point.riskLevel)
+            }}
+            aria-label={`${point.title} 공장 정보 보기`}
+          />
+        );
+      })}
+
+      <div className="absolute left-4 top-4 max-w-md rounded-md border border-amber/40 bg-white/95 p-3 text-xs shadow-soft backdrop-blur">
+        <div className="flex items-center gap-2 font-bold text-[#7a5b12]">
+          <AlertTriangle className="h-4 w-4" /> {provider} SDK 연결 대기
+        </div>
+        <p className="mt-2 leading-5 text-muted">
+          외부 지도 SDK가 막혀도 저장된 해외 공장 좌표는 fallback 지도에 표시합니다. API 키 제한을 정리하면 실제 {provider} 지도로 자동 전환됩니다.
+        </p>
+        <p className="mt-2 rounded bg-panel px-2 py-1 font-mono text-[10px] text-muted">{error}</p>
+      </div>
+
+      <div className="absolute bottom-4 right-4 rounded-md border border-line bg-white/95 px-3 py-2 text-[11px] font-bold text-muted shadow-soft">
+        fallback view · {mapPoints.length.toLocaleString("ko-KR")} overseas points
+      </div>
+    </div>
+  );
 }
 
 function loadAmapScript(key: string): Promise<AMapNamespace> {
@@ -446,20 +595,16 @@ function AMapCanvas({
     };
   }, [key, mapPoints, radius, intensity, onHoverFactory]);
 
+  if (error) {
+    return <FallbackFactoryMap factories={factories} provider="AMap" error={error} onHoverFactory={onHoverFactory} />;
+  }
+
   return (
     <div className="relative h-[680px] overflow-hidden">
       <div ref={containerRef} className="h-full w-full" />
       <div className="pointer-events-none absolute left-4 top-4 rounded-md border border-line bg-white/95 px-3 py-2 text-xs text-muted shadow-soft">
-        {error ?? status}
+        {status}
       </div>
-      {error ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-panel/80 p-6 text-center">
-          <div className="max-w-md rounded-md border border-line bg-white p-5 shadow-soft">
-            <div className="text-sm font-semibold text-danger">AMap 로딩 실패</div>
-            <p className="mt-2 text-sm leading-6 text-muted">{error}</p>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -572,20 +717,16 @@ function GoogleMapCanvas({
     };
   }, [key, mapPoints, radius, intensity, onHoverFactory]);
 
+  if (error) {
+    return <FallbackFactoryMap factories={factories} provider="Google Maps" error={error} onHoverFactory={onHoverFactory} />;
+  }
+
   return (
     <div className="relative h-[680px] overflow-hidden">
       <div ref={containerRef} className="h-full w-full" />
       <div className="pointer-events-none absolute left-4 top-4 rounded-md border border-line bg-white/95 px-3 py-2 text-xs text-muted shadow-soft">
-        {error ?? status}
+        {status}
       </div>
-      {error ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-panel/80 p-6 text-center">
-          <div className="max-w-md rounded-md border border-line bg-white p-5 shadow-soft">
-            <div className="text-sm font-semibold text-danger">Google Maps 로딩 실패</div>
-            <p className="mt-2 text-sm leading-6 text-muted">{error}</p>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
