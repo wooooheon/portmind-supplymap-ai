@@ -3,6 +3,10 @@ import { z } from "zod";
 import { runTradeAssistantWithOptions } from "@/lib/assistant/run-trade-assistant";
 import { normalizeLlmModel, normalizeLlmProvider, normalizeReasoningEffort } from "@/lib/llm/providers";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
 const bodySchema = z.object({
   prompt: z.string().min(4).max(4000),
   llmProvider: z.enum(["deepseek", "openai"]).optional(),

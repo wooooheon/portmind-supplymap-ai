@@ -7,6 +7,7 @@ import { runSupplyMapChat, type SupplyMapChatEvidenceRecord } from "@/lib/supply
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const bodySchema = z.object({
   productName: z.string().trim().min(2).max(200).optional(),

@@ -140,6 +140,20 @@ function extractOpenAIText(payload: unknown): string | undefined {
   return text || undefined;
 }
 
+function openAiOutputBudget(requestedMaxTokens: number, reasoningEffort: LlmReasoningEffort) {
+  if (reasoningEffort === "xhigh") return Math.max(requestedMaxTokens, 18_000);
+  if (reasoningEffort === "high") return Math.max(requestedMaxTokens, 12_000);
+  if (reasoningEffort === "medium") return Math.max(requestedMaxTokens, 7_000);
+  return Math.max(requestedMaxTokens, 3_500);
+}
+
+function effectiveTimeoutMs(provider: LlmProvider, model: string, reasoningEffort: LlmReasoningEffort, requestedTimeoutMs: number) {
+  if (provider !== "openai") return requestedTimeoutMs;
+  if (model.includes("pro") || reasoningEffort === "xhigh") return Math.max(requestedTimeoutMs, 55_000);
+  if (reasoningEffort === "high") return Math.max(requestedTimeoutMs, 50_000);
+  return Math.max(requestedTimeoutMs, 45_000);
+}
+
 export async function callLlmProviderChat(args: {
   provider: LlmProvider;
   messages: LlmMessage[];
@@ -156,7 +170,8 @@ export async function callLlmProviderChat(args: {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), args.timeoutMs);
+  const timeoutMs = effectiveTimeoutMs(args.provider, model, reasoningEffort, args.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     if (args.provider === "openai") {
@@ -171,7 +186,7 @@ export async function callLlmProviderChat(args: {
           model,
           input: args.messages,
           reasoning: { effort: reasoningEffort },
-          max_output_tokens: args.maxTokens
+          max_output_tokens: openAiOutputBudget(args.maxTokens, reasoningEffort)
         })
       });
 
@@ -182,7 +197,19 @@ export async function callLlmProviderChat(args: {
 
       const data = await response.json();
       const answer = extractOpenAIText(data);
-      if (!answer) return args.fallback("OpenAI returned an empty response.", args.provider);
+      if (!answer) {
+        const status = typeof data?.status === "string" ? data.status : "unknown";
+        const incompleteReason =
+          data?.incomplete_details && typeof data.incomplete_details === "object" && "reason" in data.incomplete_details
+            ? String(data.incomplete_details.reason)
+            : undefined;
+        return args.fallback(
+          incompleteReason
+            ? `OpenAI returned no visible answer. status=${status}, reason=${incompleteReason}.`
+            : `OpenAI returned an empty response. status=${status}.`,
+          args.provider
+        );
+      }
       return {
         answer,
         model: typeof data?.model === "string" ? data.model : model,
@@ -234,7 +261,11 @@ export async function callLlmProviderChat(args: {
     };
   } catch (error) {
     return args.fallback(
-      error instanceof Error ? error.message : `${providerDisplayName(args.provider)} request failed.`,
+      error instanceof Error && error.name === "AbortError"
+        ? `${providerDisplayName(args.provider)} timed out after ${Math.round(timeoutMs / 1000)}s.`
+        : error instanceof Error
+          ? error.message
+          : `${providerDisplayName(args.provider)} request failed.`,
       args.provider
     );
   } finally {
