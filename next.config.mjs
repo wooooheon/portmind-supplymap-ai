@@ -3,6 +3,9 @@ const nextConfig = {
   devIndicators: false,
   eslint: {
     ignoreDuringBuilds: false
+  },
+  outputFileTracingIncludes: {
+    "/*": ["./prisma/dev.db"]
   }
 };
 
