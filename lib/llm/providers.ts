@@ -141,15 +141,20 @@ function extractOpenAIText(payload: unknown): string | undefined {
 }
 
 function openAiOutputBudget(requestedMaxTokens: number, reasoningEffort: LlmReasoningEffort) {
-  if (reasoningEffort === "xhigh") return Math.max(requestedMaxTokens, 18_000);
   if (reasoningEffort === "high") return Math.max(requestedMaxTokens, 12_000);
   if (reasoningEffort === "medium") return Math.max(requestedMaxTokens, 7_000);
   return Math.max(requestedMaxTokens, 3_500);
 }
 
+function openAiReasoningEffort(reasoningEffort: LlmReasoningEffort) {
+  // xhigh is intended for hardest asynchronous workloads. This app needs a
+  // synchronous answer inside Vercel's request window, so Max uses high.
+  return reasoningEffort === "xhigh" ? "high" : reasoningEffort;
+}
+
 function effectiveTimeoutMs(provider: LlmProvider, model: string, reasoningEffort: LlmReasoningEffort, requestedTimeoutMs: number) {
   if (provider !== "openai") return requestedTimeoutMs;
-  if (model.includes("pro") || reasoningEffort === "xhigh") return Math.max(requestedTimeoutMs, 55_000);
+  if (model.includes("pro")) return Math.max(requestedTimeoutMs, 55_000);
   if (reasoningEffort === "high") return Math.max(requestedTimeoutMs, 50_000);
   return Math.max(requestedTimeoutMs, 45_000);
 }
@@ -175,6 +180,7 @@ export async function callLlmProviderChat(args: {
 
   try {
     if (args.provider === "openai") {
+      const effectiveReasoningEffort = openAiReasoningEffort(reasoningEffort);
       const response = await fetch("https://api.openai.com/v1/responses", {
         method: "POST",
         signal: controller.signal,
@@ -185,8 +191,8 @@ export async function callLlmProviderChat(args: {
         body: JSON.stringify({
           model,
           input: args.messages,
-          reasoning: { effort: reasoningEffort },
-          max_output_tokens: openAiOutputBudget(args.maxTokens, reasoningEffort)
+          reasoning: { effort: effectiveReasoningEffort },
+          max_output_tokens: openAiOutputBudget(args.maxTokens, effectiveReasoningEffort)
         })
       });
 
